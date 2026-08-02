@@ -28,7 +28,6 @@ with open("realities.json", "r", encoding="utf-8") as f:
 TOPICS = DATA["topics"]
 TOPICS_DICT = {topic["name"]: topic["questions"] for topic in TOPICS}
 
-
 # -------------------- FSM (состояния) --------------------
 class GameStates(StatesGroup):
     choosing_topic = State()
@@ -36,10 +35,8 @@ class GameStates(StatesGroup):
     playing = State()
     finished = State()
 
-
 # -------------------- Хранилище сессий пользователей --------------------
 user_sessions: Dict[int, Dict] = {}
-
 
 def get_user_session(user_id: int) -> Dict:
     if user_id not in user_sessions:
@@ -56,7 +53,6 @@ def get_user_session(user_id: int) -> Dict:
         }
     return user_sessions[user_id]
 
-
 # -------------------- Вспомогательные функции --------------------
 def get_random_options(correct_idx, all_questions, count=5):
     n = len(all_questions)
@@ -68,16 +64,14 @@ def get_random_options(correct_idx, all_questions, count=5):
     pool = list(range(n))
     pool.remove(correct_idx)
     random.shuffle(pool)
-    indices.extend(pool[:count - 1])
+    indices.extend(pool[:count-1])
     random.shuffle(indices)
     return indices
-
 
 # -------------------- Инициализация бота --------------------
 storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
-
 
 # -------------------- Обработчики команд --------------------
 @dp.message(Command("start"))
@@ -98,7 +92,6 @@ async def cmd_start(message: Message, state: FSMContext):
     )
     await state.set_state(GameStates.choosing_topic)
 
-
 @dp.callback_query(StateFilter(GameStates.choosing_topic), F.data.startswith("topic_"))
 async def process_topic_selection(callback: CallbackQuery, state: FSMContext):
     topic_index = int(callback.data.split("_")[1])
@@ -117,7 +110,6 @@ async def process_topic_selection(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(GameStates.choosing_question_count)
     await callback.answer()
-
 
 @dp.message(StateFilter(GameStates.choosing_question_count))
 async def process_question_count(message: Message, state: FSMContext):
@@ -152,7 +144,6 @@ async def process_question_count(message: Message, state: FSMContext):
     await state.set_state(GameStates.playing)
     await send_next_question(message, state)
 
-
 # -------------------- Функция отправки вопроса --------------------
 async def send_next_question(message: Message, state: FSMContext):
     user_id = message.chat.id
@@ -181,18 +172,17 @@ async def send_next_question(message: Message, state: FSMContext):
         question_text = question["description"]
         option_texts = [questions[opt_idx]["name"] for opt_idx in options_indices]
 
-    options_message = "\n".join([f"{i + 1}. {text}" for i, text in enumerate(option_texts)])
+    options_message = "\n".join([f"{i+1}. {text}" for i, text in enumerate(option_texts)])
     full_message = (
-        f"Вопрос {session['current_index'] + 1} из {session['total']}:\n\n"
+        f"Вопрос {session['current_index']+1} из {session['total']}:\n\n"
         f"{question_text}\n\n"
         f"Варианты:\n{options_message}"
     )
 
-    buttons = [[InlineKeyboardButton(text=str(i + 1), callback_data=str(i))] for i in range(len(option_texts))]
+    buttons = [[InlineKeyboardButton(text=str(i+1), callback_data=str(i))] for i in range(len(option_texts))]
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     await message.answer(full_message, reply_markup=keyboard)
-
 
 # -------------------- Обработка ответа --------------------
 @dp.callback_query(StateFilter(GameStates.playing), F.data.regexp(r'^\d+$'))
@@ -207,7 +197,7 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
         session["correct"] += 1
         result_text = "✅ Правильно! В этот раз вам повезло, Пользователь."
     else:
-        result_text = f"❌ Неправильно. Правильный ответ: {right + 1}."
+        result_text = f"❌ Неправильно. Правильный ответ: {right+1}."
 
     await callback.message.edit_text(
         callback.message.text + "\n\n" + result_text,
@@ -231,13 +221,11 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
 
     await callback.answer()
 
-
 @dp.callback_query(StateFilter(GameStates.playing), F.data == "next_question")
 async def next_question_callback(callback: CallbackQuery, state: FSMContext):
     await callback.message.delete()
     await send_next_question(callback.message, state)
     await callback.answer()
-
 
 # -------------------- Завершение игры --------------------
 async def show_final_result(message: Message, state: FSMContext, user_id: int):
@@ -258,7 +246,6 @@ async def show_final_result(message: Message, state: FSMContext, user_id: int):
     )
     await state.set_state(GameStates.finished)
 
-
 @dp.callback_query(StateFilter(GameStates.finished), F.data == "restart")
 async def restart_game(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
@@ -273,7 +260,6 @@ async def restart_game(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("Введите количество вопросов (число):")
     await state.set_state(GameStates.choosing_question_count)
     await callback.answer()
-
 
 @dp.callback_query(StateFilter(GameStates.finished), F.data == "main_menu")
 async def go_to_main_menu(callback: CallbackQuery, state: FSMContext):
@@ -291,48 +277,52 @@ async def go_to_main_menu(callback: CallbackQuery, state: FSMContext):
     await state.set_state(GameStates.choosing_topic)
     await callback.answer()
 
-
 # -------------------- WEBHOOK ЗАПУСК (ЗАМЕНЯЕТ POLLING) --------------------
+# Добавляем корневой маршрут для проверки работоспособности Render
+async def index(request):
+    return web.Response(text="Bot is running!", status=200)
+
 async def on_startup(bot: Bot):
-    # Render автоматически добавляет переменную RENDER_EXTERNAL_URL
-    domain = os.getenv("RENDER_EXTERNAL_URL", "").replace("https://", "")
-    if not domain:
-        # Для локальной разработки на случай, если переменной нет
-        domain = f"localhost:{os.getenv('PORT', 10000)}"
-        webhook_url = f"http://{domain}/webhook"
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL")
+    if webhook_url:
+        # Правильно формируем ссылку (убираем лишний слеш)
+        webhook_url = webhook_url.rstrip('/') + '/webhook'
     else:
-        webhook_url = f"https://{domain}/webhook"
-
+        # Локальная разработка
+        port = int(os.getenv("PORT", 10000))
+        webhook_url = f"http://localhost:{port}/webhook"
+    
     logging.info(f"Setting webhook to: {webhook_url}")
-    await bot.set_webhook(webhook_url)
+    try:
+        await bot.set_webhook(webhook_url)
+        logging.info("Webhook set successfully!")
+    except Exception as e:
+        logging.error(f"FAILED to set webhook: {e}")
+        logging.exception("Full traceback:")
 
-
+# Примечание: Не удаляем вебхук при выключении, чтобы избежать "Unclosed client session"
 async def on_shutdown(bot: Bot):
-    await bot.delete_webhook()
+    pass 
 
-
-# Регистрируем события старта и остановки
 dp.startup.register(on_startup)
 dp.shutdown.register(on_shutdown)
 
-
 def main():
     PORT = int(os.getenv("PORT", 10000))
-
-    # Создаем aiohttp приложение
     app = web.Application()
-
+    
+    # Регистрируем путь для проверки здоровья Render
+    app.router.add_get("/", index)
+    
     # Регистрируем обработчик вебхука
     webhook_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
     webhook_handler.register(app, path="/webhook")
-
+    
     # Подключаем диспетчер
     setup_application(app, dp, bot=bot)
-
-    # Запускаем сервер. Render обязывает слушать 0.0.0.0
+    
     logging.info(f"Starting bot webhook on port {PORT}")
     web.run_app(app, host="0.0.0.0", port=PORT)
-
 
 if __name__ == "__main__":
     main()
