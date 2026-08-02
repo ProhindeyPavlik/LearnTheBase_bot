@@ -2,24 +2,37 @@ import os
 import subprocess
 import sys
 import time
-import staypresent
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Запускаем веб-сервер для keep-alive (чтобы Render не усыпил)
-staypresent.web.json({"status": "running"})
+# ----- Веб-сервер для keep-alive (чтобы Render не усыпил) -----
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
 
-# Запускаем бота в бесконечном цикле с перезапуском
+def run_webserver(port):
+    server = HTTPServer(('', port), Handler)
+    server.serve_forever()
+
+port = int(os.getenv("PORT", 8080))
+thread = threading.Thread(target=run_webserver, args=(port,), daemon=True)
+thread.start()
+print(f"Keep-alive web server running on port {port}")
+
+# ----- Запуск бота с перезапуском при падении -----
 while True:
     try:
-        # Запускаем bot.py как отдельный процесс
         process = subprocess.Popen(
             [sys.executable, "bot.py"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True
         )
-        # Ждём завершения процесса (или можно читать логи, но оставим простой вариант)
+        # Ждём завершения процесса (если бот упадёт или его убьют)
         process.wait()
-        print(f"Bot process exited with code {process.returncode}. Restarting...")
+        print(f"Bot process exited with code {process.returncode}. Restarting in 2s...")
     except Exception as e:
-        print(f"Exception while running bot: {e}. Restarting...")
-    time.sleep(2)  # небольшая пауза перед перезапуском
+        print(f"Exception while running bot: {e}. Restarting in 2s...")
+    time.sleep(2)
