@@ -291,30 +291,36 @@ async def go_to_main_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+async def index(request):
+
+    return web.Response(text="Bot is running!", status=200)
+
+
 async def on_startup(bot: Bot):
-    domain = os.getenv("RENDER_EXTERNAL_URL", "").replace("https://", "")
-    if not domain:
-        domain = f"localhost:{os.getenv('PORT', 10000)}"
-        webhook_url = f"http://{domain}/webhook"
-    else:
-        webhook_url = f"https://{domain}/webhook"
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+    if not webhook_url:
+        port = int(os.getenv("PORT", 10000))
+        webhook_url = f"http://localhost:{port}"
 
+    webhook_url = f"{webhook_url}/webhook"
     logging.info(f"Setting webhook to: {webhook_url}")
-    await bot.set_webhook(webhook_url)
-
-
-async def on_shutdown(bot: Bot):
-    await bot.delete_webhook()
+    try:
+        await bot.set_webhook(webhook_url)
+        logging.info("Webhook set successfully!")
+    except Exception as e:
+        logging.error(f"FAILED to set webhook: {e}")
+        logging.exception("Full traceback:")
 
 
 dp.startup.register(on_startup)
-dp.shutdown.register(on_shutdown)
 
 
 def main():
     PORT = int(os.getenv("PORT", 10000))
 
     app = web.Application()
+
+    app.router.add_get("/", index)
 
     webhook_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
     webhook_handler.register(app, path="/webhook")
