@@ -305,12 +305,12 @@ async def on_startup(bot: Bot):
     webhook_url = f"{webhook_url}/webhook"
     logging.info(f"Setting webhook to: {webhook_url}")
     try:
+        await bot.delete_webhook(drop_pending_updates=True)
         await bot.set_webhook(webhook_url)
         logging.info("Webhook set successfully!")
     except Exception as e:
         logging.error(f"FAILED to set webhook: {e}")
         logging.exception("Full traceback:")
-
 
 dp.startup.register(on_startup)
 
