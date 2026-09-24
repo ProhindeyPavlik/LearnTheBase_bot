@@ -105,7 +105,7 @@ async def process_topic_selection(callback: CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         f"Вы выбрали тему: {topic_name}\n"
-        f"В теме {len(questions)} вопросов.\n"
+        f"Вопросов в теме: {len(questions)}.\n"
         "Введите количество вопросов (число):"
     )
     await state.set_state(GameStates.choosing_question_count)
@@ -124,12 +124,12 @@ async def process_question_count(message: Message, state: FSMContext):
 
     text = message.text.strip()
     if not text.isdigit():
-        await message.answer("Пожалуйста, введите целое положительное число.")
+        await message.answer("Вы чо? Введите целое положительное число.")
         return
 
     count = int(text)
     if count <= 0:
-        await message.answer("Количество вопросов должно быть больше 0.")
+        await message.answer("Вы чо? Количество вопросов должно быть больше 0.")
         return
     if count > len(questions):
         count = len(questions)
@@ -141,7 +141,7 @@ async def process_question_count(message: Message, state: FSMContext):
     session["current_index"] = 0
     session["correct"] = 0
 
-    await message.answer(f"Она сказала стартуем! Всего вопросов: {count}.")
+    await message.answer(f"Она сказала стартуем!")
     await state.set_state(GameStates.playing)
     await send_next_question(message, state)
 
@@ -246,7 +246,7 @@ async def show_final_result(message: Message, state: FSMContext, user_id: int):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Играть заново", callback_data="restart")],
+            [InlineKeyboardButton(text="Заново", callback_data="restart")],
             [InlineKeyboardButton(text="Главное меню", callback_data="main_menu")]
         ]
     )
