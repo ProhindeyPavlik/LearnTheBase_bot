@@ -24,7 +24,6 @@ with open("realities.json", "r", encoding="utf-8") as f:
     DATA = json.load(f)
 
 TOPICS = DATA["topics"]
-TOPICS_DICT = {topic["name"]: topic["questions"] for topic in TOPICS}
 
 
 class GameStates(StatesGroup):
@@ -67,10 +66,49 @@ def get_random_options(correct_idx, all_questions, count=5):
     random.shuffle(indices)
     return indices
 
+def get_topic_questions(topic):
+    if topic.get("type") == "grouped":
+        questions = []
+        for group, words in topic["groups"].items():
+            for word in words:
+                questions.append({
+                    "name": word,
+                    "description": group
+                })
+        return questions
+
+    return topic["questions"]
 
 storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
+
+
+def get_grouped_options(question, topic, swap):
+    groups = topic["groups"]
+    correct_group = question["description"]
+
+    other_groups = [
+        group for group in groups
+        if group != correct_group
+    ]
+
+    if swap:
+        selected_groups = random.sample(other_groups, 4)
+        options = [correct_group] + selected_groups
+        random.shuffle(options)
+        right_pos = options.index(correct_group)
+        return options, right_pos
+    else:
+        selected_groups = random.sample(other_groups, 4)
+        options = [
+            random.choice(groups[group])
+            for group in selected_groups
+        ]
+        options.append(question["name"])
+        random.shuffle(options)
+        right_pos = options.index(question["name"])
+        return options, right_pos
 
 
 @dp.message(Command("start"))
@@ -95,12 +133,13 @@ async def cmd_start(message: Message, state: FSMContext):
 @dp.callback_query(StateFilter(GameStates.choosing_topic), F.data.startswith("topic_"))
 async def process_topic_selection(callback: CallbackQuery, state: FSMContext):
     topic_index = int(callback.data.split("_")[1])
-    topic_name = TOPICS[topic_index]["name"]
-    questions = TOPICS_DICT[topic_name]
+    topic = TOPICS[topic_index]
+    topic_name = topic["name"]
+    questions = get_topic_questions(topic)
 
     user_id = callback.from_user.id
     session = get_user_session(user_id)
-    session["topic"] = questions
+    session["topic"] = topic
     session["total"] = 0
 
     await callback.message.edit_text(
@@ -116,7 +155,8 @@ async def process_topic_selection(callback: CallbackQuery, state: FSMContext):
 async def process_question_count(message: Message, state: FSMContext):
     user_id = message.from_user.id
     session = get_user_session(user_id)
-    questions = session["topic"]
+    topic = session["topic"]
+    questions = get_topic_questions(topic)
     if not questions:
         await message.answer("Ошибка: тема не выбрана. Начните заново командой /start")
         await state.clear()
@@ -157,28 +197,53 @@ async def send_next_question(message: Message, state: FSMContext):
         await show_final_result(message, state, user_id)
         return
 
-    questions = session["topic"]
+    topic = session["topic"]
+    questions = get_topic_questions(topic)
+
     idx = session["questions"][session["current_index"]]
     question = questions[idx]
 
-    options_indices = get_random_options(idx, questions, count=5)
     swap = random.choice([True, False])
     session["swap"] = swap
     session["current_question_data"] = question
-    session["current_options"] = options_indices
-    right_pos = options_indices.index(idx)
-    session["current_right"] = right_pos
 
-    if swap:
-        question_text = question["name"]
-        option_texts = [questions[opt_idx]["description"] for opt_idx in options_indices]
+    if topic.get("type") == "grouped":
+        option_texts, right_pos = get_grouped_options(
+            question,
+            topic,
+            swap
+        )
+        if swap:
+            question_text = question["name"]
+        else:
+            question_text = question["description"]
+
     else:
-        question_text = question["description"]
-        option_texts = [questions[opt_idx]["name"] for opt_idx in options_indices]
+        options_indices = get_random_options(idx, questions, count=5)
+
+        right_pos = options_indices.index(idx)
+
+        if swap:
+            question_text = question["name"]
+            option_texts = [
+                questions[opt_idx]["description"]
+                for opt_idx in options_indices
+            ]
+        else:
+            question_text = question["description"]
+            option_texts = [
+                questions[opt_idx]["name"]
+                for opt_idx in options_indices
+            ]
+
+    session["current_right"] = right_pos
+    session["current_options"] = option_texts
 
     options_message = "\n\n".join(
-        f"{NUM_EMOJI[i]} {text}" for i, text in enumerate(option_texts)
+        f"{NUM_EMOJI[i]} {text}"
+        for i, text in enumerate(option_texts)
     )
+
     full_message = (
         f"Вопрос {session['current_index'] + 1} из {session['total']}:\n\n"
         f"{question_text}\n\n"
@@ -186,13 +251,19 @@ async def send_next_question(message: Message, state: FSMContext):
     )
 
     buttons = [
-        [InlineKeyboardButton(text=NUM_EMOJI[i], callback_data=str(i))]
+        [InlineKeyboardButton(
+            text=NUM_EMOJI[i],
+            callback_data=str(i)
+        )]
         for i in range(len(option_texts))
     ]
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    await message.answer(full_message, reply_markup=keyboard)
-
+    await message.answer(
+        full_message,
+        reply_markup=keyboard
+    )
 
 @dp.callback_query(StateFilter(GameStates.playing), F.data.regexp(r'^\d+$'))
 async def process_answer(callback: CallbackQuery, state: FSMContext):
@@ -292,7 +363,6 @@ async def go_to_main_menu(callback: CallbackQuery, state: FSMContext):
 
 
 async def index(request):
-
     return web.Response(text="Bot is running!", status=200)
 
 
