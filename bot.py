@@ -491,16 +491,12 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
         await show_final_result(callback.message, state, user_id)
     else:
         await state.set_state(GameStates.waiting_next)
-
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="Следующий вопрос",
-                    callback_data="next_question"
-                )]
+                [InlineKeyboardButton(text="Следующий вопрос", callback_data="next_question")],
+                [InlineKeyboardButton(text="Главное меню", callback_data="main_menu")]
             ]
         )
-
         await callback.message.answer(
             "Продолжаем?",
             reply_markup=keyboard
@@ -566,16 +562,12 @@ async def process_text_answer(message: Message, state: FSMContext):
         await show_final_result(message, state, user_id)
     else:
         await state.set_state(GameStates.waiting_next)
-
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="Следующий вопрос",
-                    callback_data="next_question"
-                )]
+                [InlineKeyboardButton(text="Следующий вопрос", callback_data="next_question")],
+                [InlineKeyboardButton(text="Главное меню", callback_data="main_menu")]
             ]
         )
-
         await message.answer(
             "Продолжаем?",
             reply_markup=keyboard
@@ -624,7 +616,7 @@ async def restart_game(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dp.callback_query(StateFilter(GameStates.finished), F.data == "main_menu")
+@dp.callback_query(StateFilter(GameStates.finished, GameStates.waiting_next), F.data == "main_menu")
 async def go_to_main_menu(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     if user_id in user_sessions:
