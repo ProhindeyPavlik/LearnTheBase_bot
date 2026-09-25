@@ -28,10 +28,23 @@ TOPICS = DATA["topics"]
 
 class GameStates(StatesGroup):
     choosing_topic = State()
+    choosing_format = State()
+    choosing_inventor_format = State()
     choosing_question_count = State()
     playing = State()
+    waiting_next = State()
     finished = State()
 
+ENHANCED_TOPIC_NAMES = {
+    "Корабли",
+    "Лошади",
+    "Японцы",
+    "Японские словечки",
+    "Древняя Греция",
+    "Греческие боги",
+    "Немецкие города",
+    "Изобретатели",
+}
 
 user_sessions: Dict[int, Dict] = {}
 
@@ -43,7 +56,8 @@ def get_user_session(user_id: int) -> Dict:
             "questions": [],
             "current_index": 0,
             "total": 0,
-            "correct": 0,
+            "score": 0.0,
+            "format": "options",
             "current_question_data": None,
             "current_options": [],
             "current_right": -1,
@@ -111,6 +125,70 @@ def get_grouped_options(question, topic, swap):
         return options, right_pos
 
 
+def normalize_answer(text: str) -> str:
+    text = text.casefold()
+    text = text.replace("ё", "е")
+    text = text.replace("й", "и")
+    text = "".join(char for char in text if not char.isspace())
+    return text
+
+
+def lcs_len(first: str, second: str) -> int:
+    if len(first) < len(second):
+        first, second = second, first
+
+    previous = [0] * (len(second) + 1)
+
+    for char_first in first:
+        current = [0] * (len(second) + 1)
+
+        for j, char_second in enumerate(second, start=1):
+            if char_first == char_second:
+                current[j] = previous[j - 1] + 1
+            else:
+                current[j] = max(previous[j], current[j - 1])
+
+        previous = current
+
+    return previous[-1]
+
+
+def get_text_answer_score(user_answer: str, correct_answer: str) -> float:
+    user_answer = normalize_answer(user_answer)
+    correct_answer = normalize_answer(correct_answer)
+
+    if not user_answer:
+        return 0.0
+    if user_answer == correct_answer:
+        return 1.0
+    if len(correct_answer) < 4:
+        return 0.0
+
+    common_len = lcs_len(user_answer, correct_answer)
+    similarity = common_len / max(
+        len(user_answer),
+        len(correct_answer)
+    )
+    if similarity >= 0.8:
+        return 0.9
+
+    return 0.0
+
+
+def get_expected_answer(question, topic, game_format):
+    if topic["name"] == "Изобретатели" and game_format == "surname":
+        return question["name"].split()[-1]
+
+    return question["name"]
+
+
+def format_score(score: float) -> str:
+    score = round(score, 1)
+    if score.is_integer():
+        return str(int(score))
+    return str(score).replace(".", ",")
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -130,24 +208,115 @@ async def cmd_start(message: Message, state: FSMContext):
     await state.set_state(GameStates.choosing_topic)
 
 
+async def ask_question_count(message: Message, state: FSMContext):
+    user_id = message.chat.id
+    session = get_user_session(user_id)
+    topic = session["topic"]
+    questions = get_topic_questions(topic)
+
+    await message.edit_text(
+        f"Вы выбрали тему: {topic['name']}\n"
+        f"Вопросов в теме: {len(questions)}.\n"
+        "Введите количество вопросов (число):"
+    )
+
+    await state.set_state(GameStates.choosing_question_count)
+
+
 @dp.callback_query(StateFilter(GameStates.choosing_topic), F.data.startswith("topic_"))
 async def process_topic_selection(callback: CallbackQuery, state: FSMContext):
     topic_index = int(callback.data.split("_")[1])
     topic = TOPICS[topic_index]
     topic_name = topic["name"]
-    questions = get_topic_questions(topic)
 
     user_id = callback.from_user.id
     session = get_user_session(user_id)
     session["topic"] = topic
     session["total"] = 0
 
-    await callback.message.edit_text(
-        f"Вы выбрали тему: {topic_name}\n"
-        f"Вопросов в теме: {len(questions)}.\n"
-        "Введите количество вопросов (число):"
-    )
-    await state.set_state(GameStates.choosing_question_count)
+    if topic_name == "Изобретатели":
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="С вариантами ответов",
+                    callback_data="inventor_format_options"
+                )],
+                [InlineKeyboardButton(
+                    text="Вводить только фамилию",
+                    callback_data="inventor_format_surname"
+                )],
+                [InlineKeyboardButton(
+                    text="Вводить имя и фамилию",
+                    callback_data="inventor_format_full_name"
+                )],
+            ]
+        )
+
+        await callback.message.edit_text(
+            f"Вы выбрали тему: {topic_name}\n"
+            "Выберите формат:",
+            reply_markup=keyboard
+        )
+
+        await state.set_state(GameStates.choosing_inventor_format)
+
+    elif topic_name in ENHANCED_TOPIC_NAMES:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="С вариантами ответов",
+                    callback_data="format_options"
+                )],
+                [InlineKeyboardButton(
+                    text="Без вариантов ответов",
+                    callback_data="format_text"
+                )],
+            ]
+        )
+
+        await callback.message.edit_text(
+            f"Вы выбрали тему: {topic_name}\n"
+            "Выберите формат:",
+            reply_markup=keyboard
+        )
+
+        await state.set_state(GameStates.choosing_format)
+
+    else:
+        session["format"] = "options"
+        await ask_question_count(callback.message, state)
+
+    await callback.answer()
+
+
+@dp.callback_query(StateFilter(GameStates.choosing_format), F.data.startswith("format_"))
+async def process_format_selection(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    session = get_user_session(user_id)
+
+    if callback.data == "format_options":
+        session["format"] = "options"
+    else:
+        session["format"] = "text"
+
+    await ask_question_count(callback.message, state)
+    await callback.answer()
+
+
+@dp.callback_query(
+    StateFilter(GameStates.choosing_inventor_format),
+    F.data.startswith("inventor_format_")
+)
+async def process_inventor_format_selection(
+    callback: CallbackQuery,
+    state: FSMContext
+):
+    user_id = callback.from_user.id
+    session = get_user_session(user_id)
+
+    session["format"] = callback.data.replace("inventor_format_", "")
+
+    await ask_question_count(callback.message, state)
     await callback.answer()
 
 
@@ -179,7 +348,7 @@ async def process_question_count(message: Message, state: FSMContext):
     session["questions"] = indices[:count]
     session["total"] = count
     session["current_index"] = 0
-    session["correct"] = 0
+    session["score"] = 0.0
 
     await message.answer(f"Она сказала стартуем!")
     await state.set_state(GameStates.playing)
@@ -202,6 +371,35 @@ async def send_next_question(message: Message, state: FSMContext):
 
     idx = session["questions"][session["current_index"]]
     question = questions[idx]
+    game_format = session["format"]
+
+    if game_format != "options":
+        expected_answer = get_expected_answer(
+            question,
+            topic,
+            game_format
+        )
+
+        session["current_question_data"] = question
+        session["expected_answer"] = expected_answer
+
+        if topic["name"] == "Изобретатели":
+            if game_format == "surname":
+                instruction = "Введите фамилию:"
+            else:
+                instruction = "Введите имя и фамилию:"
+        else:
+            instruction = "Введите название:"
+
+        full_message = (
+            f"Вопрос {session['current_index'] + 1} "
+            f"из {session['total']}:\n\n"
+            f"{question['description']}\n\n"
+            f"{instruction}"
+        )
+
+        await message.answer(full_message)
+        return
 
     swap = random.choice([True, False])
     session["swap"] = swap
@@ -213,6 +411,7 @@ async def send_next_question(message: Message, state: FSMContext):
             topic,
             swap
         )
+
         if swap:
             question_text = question["name"]
         else:
@@ -220,7 +419,6 @@ async def send_next_question(message: Message, state: FSMContext):
 
     else:
         options_indices = get_random_options(idx, questions, count=5)
-
         right_pos = options_indices.index(idx)
 
         if swap:
@@ -274,10 +472,13 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
     right = session["current_right"]
 
     if selected == right:
-        session["correct"] += 1
+        session["score"] += 1.0
         result_text = "✅ Правильно! В этот раз вам повезло, Пользователь."
     else:
-        result_text = f"❌ Очень грустно, Пользователь. Правильный ответ: {right + 1}."
+        result_text = (
+            f"❌ Очень грустно, Пользователь. "
+            f"Правильный ответ: {right + 1}."
+        )
 
     await callback.message.edit_text(
         callback.message.text + "\n\n" + result_text,
@@ -289,12 +490,17 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
     if session["current_index"] >= session["total"]:
         await show_final_result(callback.message, state, user_id)
     else:
+        await state.set_state(GameStates.waiting_next)
+
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="Следующий вопрос", callback_data="next_question")]
+                [InlineKeyboardButton(
+                    text="Следующий вопрос",
+                    callback_data="next_question"
+                )]
             ]
         )
-        
+
         await callback.message.answer(
             "Продолжаем?",
             reply_markup=keyboard
@@ -303,16 +509,89 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dp.callback_query(StateFilter(GameStates.playing), F.data == "next_question")
+@dp.message(StateFilter(GameStates.playing))
+async def process_text_answer(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    session = get_user_session(user_id)
+
+    if session["format"] == "options":
+        await message.answer("Выберите ответ кнопкой.")
+        return
+
+    if not message.text:
+        await message.answer("Введите ответ текстом.")
+        return
+
+    topic = session["topic"]
+    questions = get_topic_questions(topic)
+
+    idx = session["questions"][session["current_index"]]
+    question = questions[idx]
+
+    correct_answer = get_expected_answer(
+        question,
+        topic,
+        session["format"]
+    )
+
+    points = get_text_answer_score(
+        message.text,
+        correct_answer
+    )
+
+    session["score"] = round(
+        session["score"] + points,
+        1
+    )
+
+    if points == 1.0:
+        result_text = (
+            f"✅ Правильно! Правильный ответ: {correct_answer}."
+        )
+    elif points == 0.9:
+        result_text = (
+            f"Почти! Правильный ответ: {correct_answer}. "
+            "Вот 0.9 балла за старание."
+        )
+    else:
+        result_text = (
+            f"❌ Неверно. Правильный ответ: {correct_answer}."
+        )
+
+    await message.answer(result_text)
+
+    session["current_index"] += 1
+
+    if session["current_index"] >= session["total"]:
+        await show_final_result(message, state, user_id)
+    else:
+        await state.set_state(GameStates.waiting_next)
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="Следующий вопрос",
+                    callback_data="next_question"
+                )]
+            ]
+        )
+
+        await message.answer(
+            "Продолжаем?",
+            reply_markup=keyboard
+        )
+
+
+@dp.callback_query(StateFilter(GameStates.waiting_next), F.data == "next_question")
 async def next_question_callback(callback: CallbackQuery, state: FSMContext):
     await callback.message.delete()
+    await state.set_state(GameStates.playing)
     await send_next_question(callback.message, state)
     await callback.answer()
 
-
 async def show_final_result(message: Message, state: FSMContext, user_id: int):
     session = get_user_session(user_id)
-    correct = session["correct"]
+    score = session["score"]
     total = session["total"]
 
     keyboard = InlineKeyboardMarkup(
@@ -323,7 +602,7 @@ async def show_final_result(message: Message, state: FSMContext, user_id: int):
     )
 
     await message.answer(
-        f"Конец!\nРезультат: {correct} из {total}.\n\n",
+        f"Конец!\nРезультат: {format_score(score)} из {total}.\n\n",
         reply_markup=keyboard
     )
     await state.set_state(GameStates.finished)
@@ -337,7 +616,7 @@ async def restart_game(callback: CallbackQuery, state: FSMContext):
     session["questions"] = []
     session["current_index"] = 0
     session["total"] = 0
-    session["correct"] = 0
+    session["score"] = 0.0
 
     await callback.message.delete()
     await callback.message.answer("Введите количество вопросов (число):")
@@ -399,6 +678,7 @@ def main():
 
     logging.info(f"Starting bot webhook on port {PORT}")
     web.run_app(app, host="0.0.0.0", port=PORT)
+
 
 
 if __name__ == "__main__":
